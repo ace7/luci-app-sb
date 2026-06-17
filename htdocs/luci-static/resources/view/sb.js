@@ -119,42 +119,6 @@ return view.extend({
 		return err.message || err.toString();
 	},
 
-	lineNumbers: function(content) {
-		var count = (content || '').split('\n').length;
-		var lines = [];
-
-		for (var i = 1; i <= count; i++)
-			lines.push(i);
-
-		return lines.join('\n');
-	},
-
-	updateLineNumbers: function() {
-		var textarea = document.getElementById('sb-config');
-		var gutter = document.getElementById('sb-config-lines');
-
-		if (!textarea || !gutter)
-			return;
-
-		gutter.textContent = this.lineNumbers(textarea.value || '');
-		this.syncLineNumberScroll();
-	},
-
-	syncLineNumberScroll: function() {
-		var textarea = document.getElementById('sb-config');
-		var gutter = document.getElementById('sb-config-lines');
-
-		if (!textarea || !gutter)
-			return;
-
-		gutter.scrollTop = textarea.scrollTop;
-	},
-
-	handleConfigInput: function() {
-		this.updateLineNumbers();
-		this.clearResult('sb-config-result');
-	},
-
 	updateStatus: function(status) {
 		var node = document.getElementById('sb-status');
 
@@ -188,7 +152,6 @@ return view.extend({
 	handleReloadConfig: function() {
 		return callConfig().then(L.bind(function(cfg) {
 			document.getElementById('sb-config').value = cfg.content || '';
-			this.updateLineNumbers();
 			this.clearResult('sb-config-result');
 			ui.addNotification(null, E('p', _('Configuration reloaded from disk.')), 'info');
 		}, this)).catch(L.bind(function(err) {
@@ -286,26 +249,6 @@ return view.extend({
 		]);
 	},
 
-	renderConfigEditor: function(content) {
-		return E('div', {
-			'style': 'display:flex; width:100%; min-height:34em; border:1px solid #ccc; background:#fff; overflow:hidden'
-		}, [
-			E('pre', {
-				'id': 'sb-config-lines',
-				'aria-hidden': 'true',
-				'style': 'flex:0 0 auto; min-width:3.5em; margin:0; padding:.5em .75em .5em .5em; border-right:1px solid #ddd; background:#f7f7f7; color:#777; overflow:hidden; text-align:right; user-select:none; font-family:monospace; font-size:13px; line-height:1.4; white-space:pre'
-			}, this.lineNumbers(content || '')),
-			E('textarea', {
-				'id': 'sb-config',
-				'style': 'flex:1 1 auto; width:100%; min-width:0; min-height:34em; height:34em; margin:0; padding:.5em; border:0; border-radius:0; box-sizing:border-box; resize:vertical; overflow:auto; font-family:monospace; font-size:13px; line-height:1.4; white-space:pre',
-				'wrap': 'off',
-				'disabled': isReadonlyView,
-				'input': ui.createHandlerFn(this, 'handleConfigInput'),
-				'scroll': ui.createHandlerFn(this, 'syncLineNumberScroll')
-			}, content || '')
-		]);
-	},
-
 	render: function(data) {
 		var cfg = data[0] || {};
 		var status = data[1] || {};
@@ -326,7 +269,12 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Configuration')),
-				this.renderConfigEditor(cfg.content || ''),
+				E('textarea', {
+					'id': 'sb-config',
+					'style': 'width:100%; min-height:34em; font-family:monospace; white-space:pre',
+					'wrap': 'off',
+					'disabled': isReadonlyView
+				}, cfg.content || ''),
 				E('div', { 'class': 'cbi-page-actions' }, [
 					E('button', { 'class': 'btn cbi-button-neutral', 'type': 'button', 'click': ui.createHandlerFn(this, 'handleReloadConfig') }, _('Reload')),
 					' ',

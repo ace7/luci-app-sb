@@ -1,0 +1,15 @@
+{
+	"luci-app-sb": {
+		"description": "Grant access to luci-app-sb",
+		"read": {
+			"ubus": {
+				"sb": [ "config", "status", "speedtest", "validate" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"sb": [ "save", "service" ]
+			}
+		}
+	}
+}

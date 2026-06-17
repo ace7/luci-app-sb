@@ -1,0 +1,252 @@
+'use strict';
+
+import { access, popen, readfile, unlink, writefile } from 'fs';
+import { cursor } from 'uci';
+
+const SERVICE = 'sing-box';
+const DEFAULT_CONFIG = '/etc/sing-box/config.json';
+const DEFAULT_WORKDIR = '/usr/share/sing-box';
+
+function shellquote(s) {
+	return `'${replace('' + s, "'", "'\\''")}'`;
+}
+
+function trimText(s) {
+	return trim(s || '');
+}
+
+function command(cmd) {
+	let fd = popen(cmd + ' 2>&1');
+	let out = '';
+	let code = 127;
+
+	if (fd) {
+		out = fd.read('all') || '';
+		code = fd.close();
+	}
+
+	return {
+		code,
+		ok: code == 0,
+		output: trimText(out)
+	};
+}
+
+function sbConfig() {
+	let uci = cursor();
+	let path = uci.get(SERVICE, 'main', 'conffile') || DEFAULT_CONFIG;
+	let workdir = uci.get(SERVICE, 'main', 'workdir') || DEFAULT_WORKDIR;
+	let enabled = uci.get(SERVICE, 'main', 'enabled') == '1';
+
+	return { path, workdir, enabled };
+}
+
+function validateContent(content) {
+	let cfg = sbConfig();
+	let tmp = sprintf('/tmp/luci-app-sb-%d.json', time());
+
+	writefile(tmp, content || '');
+
+	let res = command('/usr/bin/sing-box check -c ' + shellquote(tmp) + ' -D ' + shellquote(cfg.workdir));
+	unlink(tmp);
+
+	return {
+		valid: res.ok,
+		code: res.code,
+		message: res.output || (res.ok ? 'Configuration is valid.' : 'Configuration check failed.')
+	};
+}
+
+function status() {
+	let cfg = sbConfig();
+	let initStatus = command('/etc/init.d/' + SERVICE + ' status');
+	let initEnabled = command('/etc/init.d/' + SERVICE + ' enabled');
+	let pid = command('pidof ' + SERVICE);
+	let version = command('/usr/bin/sing-box version | sed -n "1p"');
+
+	return {
+		running: initStatus.ok,
+		enabled: initEnabled.ok || cfg.enabled,
+		status: initStatus.output || (initStatus.ok ? 'running' : 'stopped'),
+		pid: pid.output,
+		version: version.output,
+		config_path: cfg.path,
+		workdir: cfg.workdir,
+		timestamp: time()
+	};
+}
+
+function serviceAction(action) {
+	switch (action) {
+	case 'start':
+		return command('uci set sing-box.main.enabled=1 && uci commit sing-box && /etc/init.d/sing-box enable && /etc/init.d/sing-box start');
+
+	case 'stop':
+		return command('/etc/init.d/sing-box stop; uci set sing-box.main.enabled=0; uci commit sing-box; /etc/init.d/sing-box disable');
+
+	case 'restart':
+		return command('uci set sing-box.main.enabled=1 && uci commit sing-box && /etc/init.d/sing-box enable && /etc/init.d/sing-box restart');
+
+	case 'reload':
+		return command('/etc/init.d/sing-box reload');
+	}
+
+	return { ok: false, code: 2, output: 'Invalid service action.' };
+}
+
+function speedTarget(name) {
+	switch (name) {
+	case 'baidu':
+		return {
+			name: 'Baidu',
+			url: 'https://www.baidu.com',
+			proxy: false
+		};
+
+	case 'google':
+		return {
+			name: 'Google',
+			url: 'https://www.google.com/generate_204',
+			proxy: true
+		};
+
+	case 'github':
+		return {
+			name: 'GitHub',
+			url: 'https://github.com',
+			proxy: true
+		};
+	}
+
+	return null;
+}
+
+function parseCurlMetrics(text) {
+	let result = {};
+
+	for (let line in split(text || '', '\n')) {
+		let m = match(line, /^([a-z_]+)=(.*)$/);
+
+		if (m)
+			result[m[1]] = m[2];
+	}
+
+	return result;
+}
+
+function speedtest(name) {
+	let target = speedTarget(name);
+
+	if (!target)
+		return { ok: false, code: 2, message: 'Invalid speed test target.' };
+
+	let args = [
+		'-L',
+		'-o', '/dev/null',
+		'-sS',
+		'-w', 'http_code=%{http_code}\ntime_total=%{time_total}\nremote_ip=%{remote_ip}\n',
+		'--connect-timeout', '5',
+		'--max-time', '15'
+	];
+
+	if (target.proxy)
+		push(args, '-x', 'http://127.0.0.1:7890');
+
+	push(args, target.url);
+
+	let cmd = '/usr/bin/curl ' + join(' ', map(args, shellquote));
+	let res = command(cmd);
+	let metrics = parseCurlMetrics(res.output);
+	let seconds = +metrics.time_total || 0;
+
+	return {
+		ok: res.ok && seconds > 0,
+		code: res.code,
+		target: name,
+		title: target.name,
+		url: target.url,
+		proxy: target.proxy,
+		http_code: metrics.http_code || '',
+		time_total: metrics.time_total || '',
+		latency_ms: seconds ? sprintf('%.0f', seconds * 1000) : '',
+		remote_ip: metrics.remote_ip || '',
+		output: res.output
+	};
+}
+
+const methods = {
+	config: {
+		call: function() {
+			let cfg = sbConfig();
+			let content = readfile(cfg.path);
+
+			return {
+				path: cfg.path,
+				workdir: cfg.workdir,
+				content: content || '',
+				exists: content != null
+			};
+		}
+	},
+
+	validate: {
+		args: { content: '' },
+		call: function(request) {
+			return validateContent(request.args.content || '');
+		}
+	},
+
+	save: {
+		args: { content: '' },
+		call: function(request) {
+			let cfg = sbConfig();
+			let content = request.args.content || '';
+			let validation = validateContent(content);
+
+			if (!validation.valid)
+				return { ok: false, validation };
+
+			if (access(cfg.path)) {
+				let stamp = sprintf('%d', time());
+				command('cp -a ' + shellquote(cfg.path) + ' ' + shellquote(cfg.path + '.bak-luci-sb-' + stamp));
+			}
+
+			writefile(cfg.path, content);
+
+			return {
+				ok: true,
+				path: cfg.path,
+				validation
+			};
+		}
+	},
+
+	status: {
+		call: function() {
+			return status();
+		}
+	},
+
+	service: {
+		args: { action: '' },
+		call: function(request) {
+			let action = request.args.action || '';
+			let result = serviceAction(action);
+
+			if (action in [ 'start', 'stop', 'restart' ])
+				command('sleep 1');
+
+			result.status = status();
+			return result;
+		}
+	},
+
+	speedtest: {
+		args: { target: '' },
+		call: function(request) {
+			return speedtest(request.args.target || '');
+		}
+	}
+};
+
+return { sb: methods };

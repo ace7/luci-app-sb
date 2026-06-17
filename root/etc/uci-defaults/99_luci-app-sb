@@ -1,0 +1,12 @@
+#!/bin/sh
+
+uci -q get sing-box.main >/dev/null || {
+	uci set sing-box.main='sing-box'
+	uci set sing-box.main.enabled='0'
+	uci set sing-box.main.conffile='/etc/sing-box/config.json'
+	uci set sing-box.main.workdir='/usr/share/sing-box'
+	uci set sing-box.main.log_stderr='1'
+	uci commit sing-box
+}
+
+exit 0

@@ -1,0 +1,13 @@
+{
+	"admin/services/sb": {
+		"title": "sing-box",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "sb"
+		},
+		"depends": {
+			"acl": [ "luci-app-sb" ]
+		}
+	}
+}

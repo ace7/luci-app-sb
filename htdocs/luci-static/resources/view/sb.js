@@ -90,6 +90,35 @@ return view.extend({
 		];
 	},
 
+	setResult: function(id, result, kind) {
+		var node = document.getElementById(id);
+
+		if (!node)
+			return;
+
+		node.className = 'alert-message ' + (kind || 'info');
+		node.style.display = '';
+		node.textContent = result || '';
+	},
+
+	clearResult: function(id) {
+		var node = document.getElementById(id);
+
+		if (!node)
+			return;
+
+		node.className = '';
+		node.style.display = 'none';
+		node.textContent = '';
+	},
+
+	formatError: function(err) {
+		if (!err)
+			return _('Unknown error.');
+
+		return err.message || err.toString();
+	},
+
 	updateStatus: function(status) {
 		var node = document.getElementById('sb-status');
 
@@ -121,18 +150,28 @@ return view.extend({
 	},
 
 	handleReloadConfig: function() {
-		return callConfig().then(function(cfg) {
+		return callConfig().then(L.bind(function(cfg) {
 			document.getElementById('sb-config').value = cfg.content || '';
+			this.clearResult('sb-config-result');
 			ui.addNotification(null, E('p', _('Configuration reloaded from disk.')), 'info');
-		});
+		}, this)).catch(L.bind(function(err) {
+			this.setResult('sb-config-result', this.formatError(err), 'error');
+		}, this));
 	},
 
 	handleValidate: function() {
 		var content = document.getElementById('sb-config').value || '';
 
-		return callValidate(content).then(function(res) {
-			ui.addNotification(null, E('pre', { 'style': 'white-space:pre-wrap' }, res.message || ''), res.valid ? 'info' : 'danger');
-		});
+		this.setResult('sb-config-result', _('Validating...'), 'notice');
+
+		return callValidate(content).then(L.bind(function(res) {
+			var message = res.message || (res.valid ? _('Configuration is valid.') : _('Configuration check failed.'));
+
+			this.setResult('sb-config-result', message, res.valid ? 'success' : 'error');
+			ui.addNotification(null, E('pre', { 'style': 'white-space:pre-wrap' }, message), res.valid ? 'info' : 'danger');
+		}, this)).catch(L.bind(function(err) {
+			this.setResult('sb-config-result', this.formatError(err), 'error');
+		}, this));
 	},
 
 	handleConfigSave: function(restart) {
@@ -140,14 +179,20 @@ return view.extend({
 
 		return callSave(content).then(L.bind(function(res) {
 			if (!res.ok) {
-				ui.addNotification(null, E('pre', { 'style': 'white-space:pre-wrap' }, res.validation ? res.validation.message : _('Save failed.')), 'danger');
+				var message = res.validation ? res.validation.message : _('Save failed.');
+
+				this.setResult('sb-config-result', message, 'error');
+				ui.addNotification(null, E('pre', { 'style': 'white-space:pre-wrap' }, message), 'danger');
 				return;
 			}
 
+			this.setResult('sb-config-result', res.validation ? res.validation.message : _('Configuration saved.'), 'success');
 			ui.addNotification(null, E('p', _('Configuration saved.')), 'info');
 
 			if (restart)
 				return this.handleService('restart');
+		}, this)).catch(L.bind(function(err) {
+			this.setResult('sb-config-result', this.formatError(err), 'error');
 		}, this));
 	},
 
@@ -213,13 +258,13 @@ return view.extend({
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Service control')),
 				E('div', { 'class': 'cbi-page-actions' }, [
-					E('button', { 'class': 'btn cbi-button-positive', 'click': ui.createHandlerFn(this, 'handleService', 'start'), 'disabled': isReadonlyView }, _('Start')),
+					E('button', { 'class': 'btn cbi-button-positive', 'type': 'button', 'click': ui.createHandlerFn(this, 'handleService', 'start'), 'disabled': isReadonlyView }, _('Start')),
 					' ',
-					E('button', { 'class': 'btn cbi-button-negative', 'click': ui.createHandlerFn(this, 'handleService', 'stop'), 'disabled': isReadonlyView }, _('Stop')),
+					E('button', { 'class': 'btn cbi-button-negative', 'type': 'button', 'click': ui.createHandlerFn(this, 'handleService', 'stop'), 'disabled': isReadonlyView }, _('Stop')),
 					' ',
-					E('button', { 'class': 'btn cbi-button-action', 'click': ui.createHandlerFn(this, 'handleService', 'restart'), 'disabled': isReadonlyView }, _('Restart')),
+					E('button', { 'class': 'btn cbi-button-action', 'type': 'button', 'click': ui.createHandlerFn(this, 'handleService', 'restart'), 'disabled': isReadonlyView }, _('Restart')),
 					' ',
-					E('button', { 'class': 'btn cbi-button-action', 'click': ui.createHandlerFn(this, 'refreshStatus') }, _('Refresh'))
+					E('button', { 'class': 'btn cbi-button-action', 'type': 'button', 'click': ui.createHandlerFn(this, 'refreshStatus') }, _('Refresh'))
 				])
 			]),
 			E('div', { 'class': 'cbi-section' }, [
@@ -231,14 +276,18 @@ return view.extend({
 					'disabled': isReadonlyView
 				}, cfg.content || ''),
 				E('div', { 'class': 'cbi-page-actions' }, [
-					E('button', { 'class': 'btn cbi-button-neutral', 'click': ui.createHandlerFn(this, 'handleReloadConfig') }, _('Reload')),
+					E('button', { 'class': 'btn cbi-button-neutral', 'type': 'button', 'click': ui.createHandlerFn(this, 'handleReloadConfig') }, _('Reload')),
 					' ',
-					E('button', { 'class': 'btn cbi-button-action', 'click': ui.createHandlerFn(this, 'handleValidate') }, _('Validate')),
+					E('button', { 'class': 'btn cbi-button-action', 'type': 'button', 'click': ui.createHandlerFn(this, 'handleValidate') }, _('Validate')),
 					' ',
-					E('button', { 'class': 'btn cbi-button-save', 'click': ui.createHandlerFn(this, 'handleConfigSave', false), 'disabled': isReadonlyView }, _('Save')),
+					E('button', { 'class': 'btn cbi-button-save', 'type': 'button', 'click': ui.createHandlerFn(this, 'handleConfigSave', false), 'disabled': isReadonlyView }, _('Save')),
 					' ',
-					E('button', { 'class': 'btn cbi-button-apply', 'click': ui.createHandlerFn(this, 'handleConfigSave', true), 'disabled': isReadonlyView }, _('Save & Restart'))
-				])
+					E('button', { 'class': 'btn cbi-button-apply', 'type': 'button', 'click': ui.createHandlerFn(this, 'handleConfigSave', true), 'disabled': isReadonlyView }, _('Save & Restart'))
+				]),
+				E('pre', {
+					'id': 'sb-config-result',
+					'style': 'display:none; margin-top:1em; white-space:pre-wrap'
+				})
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', _('Speed test')),
